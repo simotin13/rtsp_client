@@ -15,17 +15,70 @@ func main() {
 		fmt.Println("Usage rtsp_client rtsp://<ipaddr>:<port>/<path>")
 		os.Exit(1)
 	}
+	url := os.Args[1]
 
-	conn, err := net.Dial("tcp", os.Args[0])
+	// rtsp://user:passwd@0.0.0.0:port/path
+	// rtsp://0.0.0.0
+	idx := strings.Index(url, "rtsp://")
+	if idx < 0 {
+		// invalid url
+		fmt.Sprintf("invalud url [%s]", url)
+		os.Exit(1)
+	}
+
+	tcpAddr := ""
+	user := ""
+	passwd := ""
+	tmp := url[7:]
+	idx = strings.Index(tmp, "@")
+	if idx < 0 {
+		// ユーザ名:パスワード なし
+	} else {
+		// ユーザ名:パスワード あり
+		userPass := tmp[:idx]
+		ary := strings.Split(userPass, ":")
+		if len(ary) < 2 {
+			fmt.Printf("invalud url [%s]", url)
+			os.Exit(1)
+		}
+		user = ary[0]
+		passwd = ary[1]
+		fmt.Printf("%s,%s", user, passwd)
+		tmp = tmp[(idx + 1):]
+		url = "rtsp://" + tmp
+	}
+
+	// ホスト名・IPアドレス部分を切り取り
+	idx = strings.LastIndex(tmp, "/")
+	if 0 < idx {
+		tcpAddr = tmp[0:idx]
+	}
+
+	if !strings.Contains(tcpAddr, ":") {
+		// RTSPのデフォルトポート番号を指定
+		tcpAddr += ":554"
+	}
+	conn, err := net.Dial("tcp", tcpAddr)
 	if err != nil {
+		fmt.Println(err)
 		os.Exit(-1)
 	}
 	defer conn.Close()
 
-	url := os.Args[0]
-
 	// OPTIONS
+	// OPTIONS rtsp://192.168.1.222:554/ipcam_h264.sdp RTSP/1.0
+	//CSeq: 2
+	// User-Agent: LibVLC/3.0.18 (LIVE555 Streaming Media v2016.11.28)
+	//OPTIONS rtsp://192.168.1.222:554/ipcam_h264.sdp RTSP/1.0
+	// CSeq: 2
+	//User-Agent: LibVLC/3.0.18 (LIVE555 Streaming Media v2016.11.28)
+
+	seqNo := 2
 	req := fmt.Sprintf("OPTIONS %s RTSP/1.0\r\n", url)
+	req += fmt.Sprintf("CSeq:%d\r\n", seqNo)
+	seqNo++
+	req += "User-Agent: MyRTSP client\r\n"
+	req += "\r\n"
 	resp, err := sendRecv(conn, req)
 	if err != nil {
 		os.Exit(-2)
@@ -49,6 +102,9 @@ func main() {
 		fmt.Println(msg)
 		os.Exit(-2)
 	}
+
+	// CSeqの解析
+	// レスポンスボディの解析
 
 	// SETUP
 	req = fmt.Sprintf("SETUP %s/trackID=0 RTSP/1.0\r\n", url)
@@ -83,25 +139,22 @@ func sendRecv(conn net.Conn, request string) (string, error) {
 
 func isOk(resp string) bool {
 	ary := strings.Split(resp, " ")
-	if len(ary) < 4 {
-		return false
-	}
-	if ary[0] != "Replay:" {
+	if len(ary) < 3 {
 		return false
 	}
 
-	if ary[1] != "RTSP/1.0" {
+	if ary[0] != "RTSP/1.0" {
 		return false
 	}
 
-	code, err := strconv.Atoi(ary[2])
+	code, err := strconv.Atoi(ary[1])
 	if err != nil {
 		return false
 	}
 	if code != 200 {
 		return false
 	}
-	if ary[3] != "OK" {
+	if ary[2] != "OK" {
 		return false
 	}
 
